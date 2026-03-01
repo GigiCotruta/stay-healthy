@@ -1,0 +1,6 @@
+- Proyecto: planificador de alimentación mobile-first con Next.js.
+- Mantener recetas en <= 30 minutos.
+- Respetar el patrón semanal de proteínas y acompañamientos definido en `src/lib/planner.ts`.
+- La lista de compra debe redondearse por formato de venta (paquetes).
+- Priorizar cambios pequeños y coherentes con el diseño existente.
+- Evitar añadir nuevas dependencias salvo necesidad clara.

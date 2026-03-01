@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Stay Healthy
 
-## Getting Started
+Web app mobile-first para planificar meriendas, comidas y cenas del mes, con lista de compra redondeada por formato de venta y recordatorios semanales.
 
-First, run the development server:
+## Stack
+
+- Next.js (App Router, TypeScript)
+- Tailwind CSS
+- Supabase (persistencia de plan mensual)
+- Gemini API (asistente para ajustar recetas y compra)
+- Despliegue: Vercel
+
+## Reglas del planificador
+
+- Recetas de máximo 30 minutos.
+- Patrón semanal de proteína:
+	- 2x carne roja (ternera o cerdo)
+	- 3x pescado azul
+	- 3x huevos (2 huevos por ingesta)
+	- 3x pollo
+	- 2x pescado blanco
+- Acompañamientos semanales:
+	- 2x patata/batata
+	- 1x arroz
+	- 1x pasta/couscous
+	- 1x garbanzos
+	- 1x lentejas
+	- 1x habas
+- Incluye crema de alcachofa con 2 huevos y crema de espárragos con 2 huevos.
+
+## Setup local
+
+1. Instala dependencias:
+
+```bash
+npm install
+```
+
+2. Crea tu entorno desde `.env.example`:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Ejecuta el esquema en Supabase SQL Editor:
+
+- `supabase/schema.sql`
+
+4. Inicia en local:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Variables de entorno
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `GEMINI_API_KEY`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Funcionalidades implementadas
 
-## Learn More
+- Vista diaria enfocada automáticamente en la próxima comida.
+- Vista mensual completa con toggle diaria/mensual.
+- Lista de compra mensual con redondeo por paquete (ej. arroz por kilo).
+- Recordatorios de descongelado, compra semanal y batch cooking.
+- Consulta a Gemini para aplicar ajustes reales sobre recetas y guardar automáticamente en Supabase.
 
-To learn more about Next.js, take a look at the following resources:
+## API endpoints
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `GET /api/plan?month=YYYY-MM` obtiene plan desde Supabase.
+- `POST /api/plan` guarda/actualiza plan mensual en Supabase.
+- `POST /api/ai-adjust` consulta Gemini, aplica ediciones al plan y persiste el resultado en Supabase.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Historial de cambios IA
 
-## Deploy on Vercel
+- Cada ajuste aplicado por IA se guarda en `meal_plan_ai_changes` con:
+	- `month`
+	- `prompt`
+	- `ai_message`
+	- `edits` (JSON)
+	- `created_at`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Modo desarrollo sin BBDD
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Si Supabase no está configurado, la app sigue mostrando interfaz, recetas y estimación de compra.
+- En ese modo, el plan se mantiene en memoria/localStorage para pruebas de UI.
+
+## Despliegue en Vercel
+
+1. Importa el repositorio en Vercel.
+2. Configura las variables de entorno.
+3. Deploy.
+
+Cuando el proyecto esté en producción, la app mantiene el plan mensual y te permite ajustar con IA el menú y la compra.
