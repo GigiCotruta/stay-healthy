@@ -1,6 +1,6 @@
 # Stay Healthy
 
-Web app mobile-first para planificar meriendas, comidas y cenas del mes, con lista de compra redondeada por formato de venta y recordatorios semanales.
+Web app mobile-first para planificar meriendas, comidas y cenas del mes, con lista de compra semanal redondeada por formato de venta y recordatorios semanales.
 
 ## Stack
 
@@ -62,7 +62,7 @@ npm run dev
 
 - Vista diaria enfocada automáticamente en la próxima comida.
 - Vista mensual completa con toggle diaria/mensual.
-- Lista de compra mensual con redondeo por paquete (ej. arroz por kilo).
+- Lista de compra semanal con redondeo por paquete (ej. arroz por kilo).
 - Recordatorios de descongelado, compra semanal y batch cooking.
 - Consulta a Gemini para aplicar ajustes reales sobre recetas y guardar automáticamente en Supabase.
 
@@ -92,4 +92,4 @@ npm run dev
 2. Configura las variables de entorno.
 3. Deploy.
 
-Cuando el proyecto esté en producción, la app mantiene el plan mensual y te permite ajustar con IA el menú y la compra.
+Cuando el proyecto esté en producción, la app mantiene el plan mensual y te permite ajustar con IA el menú y la compra semanal.

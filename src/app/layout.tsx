@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Stay Healthy · Planificador alimentación",
-  description: "Planificador mensual de meriendas, comidas, cenas y compra inteligente.",
+  description: "Planificador mensual de meriendas, comidas, cenas y compra semanal inteligente.",
 };
 
 export default function RootLayout({

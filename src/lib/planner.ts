@@ -67,6 +67,14 @@ export interface MonthlyPlan {
   days: DayPlan[];
 }
 
+export interface PlanWeek {
+  id: string;
+  month: string;
+  startDate: string;
+  endDate: string;
+  days: DayPlan[];
+}
+
 export interface ReminderItem {
   id: string;
   dateTime: string;
@@ -95,6 +103,8 @@ export interface ShoppingLine {
 
 export interface ShoppingList {
   month: string;
+  startDate: string;
+  endDate: string;
   totalEstimatedEur: number;
   items: ShoppingLine[];
 }
@@ -781,6 +791,14 @@ export const generateMonthlyPlan = (month: string): MonthlyPlan => {
 const sortByDateAscending = (items: ReminderItem[]) =>
   [...items].sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime());
 
+const getWeekStartDate = (isoDate: string) => {
+  const date = new Date(isoDate);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + offset);
+  return date.toISOString().slice(0, 10);
+};
+
 const proteinReminderLabel = (recipe: Recipe) => {
   if (recipe.protein === "pollo") return "pollo";
   if (recipe.protein === "carne_roja") {
@@ -884,10 +902,35 @@ export const getReminders = (plan: MonthlyPlan): ReminderItem[] => {
 
 const ingredientKey = (name: string, unit: IngredientUnit) => `${name}__${unit}`;
 
-export const buildShoppingList = (plan: MonthlyPlan): ShoppingList => {
-  const totals = new Map<string, { name: string; unit: IngredientUnit; amount: number; mercadonaUrl?: string }>();
+export const getPlanWeeks = (plan: MonthlyPlan): PlanWeek[] => {
+  const weeks = new Map<string, PlanWeek>();
 
   for (const day of plan.days) {
+    const weekId = getWeekStartDate(day.date);
+    const current = weeks.get(weekId);
+
+    if (!current) {
+      weeks.set(weekId, {
+        id: weekId,
+        month: plan.month,
+        startDate: day.date,
+        endDate: day.date,
+        days: [day],
+      });
+      continue;
+    }
+
+    current.days.push(day);
+    current.endDate = day.date;
+  }
+
+  return [...weeks.values()].sort((a, b) => a.startDate.localeCompare(b.startDate));
+};
+
+export const buildShoppingList = (plan: MonthlyPlan, days = plan.days): ShoppingList => {
+  const totals = new Map<string, { name: string; unit: IngredientUnit; amount: number; mercadonaUrl?: string }>();
+
+  for (const day of days) {
     const grouped = [day.merienda.ingredients, day.comida.ingredients, day.cena.ingredients];
     for (const list of grouped) {
       for (const item of list) {
@@ -933,18 +976,24 @@ export const buildShoppingList = (plan: MonthlyPlan): ShoppingList => {
 
   const items = shoppingLines.sort((a, b) => a.name.localeCompare(b.name, "es"));
   const totalEstimatedEur = round(items.reduce((sum, item) => sum + item.estimatedTotalEur, 0));
+  const startDate = days[0]?.date ?? `${plan.month}-01`;
+  const endDate = days[days.length - 1]?.date ?? startDate;
 
   return {
     month: plan.month,
+    startDate,
+    endDate,
     totalEstimatedEur,
     items,
   };
 };
 
-const nextMealType = (hour: number): MealType => {
-  if (hour < 11) return "merienda";
-  if (hour < 17) return "comida";
-  return "cena";
+const nextMealType = (now: Date): MealType => {
+  const minutesSinceMidnight = now.getHours() * 60 + now.getMinutes();
+
+  if (minutesSinceMidnight >= 16 * 60 && minutesSinceMidnight < 19 * 60) return "merienda";
+  if (minutesSinceMidnight >= 21 * 60 && minutesSinceMidnight < 23 * 60) return "cena";
+  return "comida";
 };
 
 export const getDailyFocus = (plan: MonthlyPlan, now = new Date()) => {
@@ -953,7 +1002,7 @@ export const getDailyFocus = (plan: MonthlyPlan, now = new Date()) => {
   const day = plan.days.find((item) => item.date === today) ?? fallback;
   return {
     day,
-    focus: nextMealType(now.getHours()),
+    focus: nextMealType(now),
   };
 };
 

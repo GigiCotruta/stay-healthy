@@ -6,12 +6,14 @@ import {
   generateMonthlyPlan,
   getCurrentMonth,
   getDailyFocus,
+  getPlanWeeks,
   getRecipePortionCalories,
   getReminders,
   scaleIngredientAmountForHousehold,
   type DayPlan,
   type MealType,
   type MonthlyPlan,
+  type PlanWeek,
 } from "@/lib/planner";
 
 type ViewMode = "diaria" | "mensual";
@@ -30,7 +32,7 @@ interface AiResponse {
 }
 
 const mealLabel: Record<MealType, string> = {
-  merienda: "Merienda",
+  merienda: "Almuerzo",
   comida: "Comida",
   cena: "Cena",
 };
@@ -47,6 +49,15 @@ const dayLabel = (isoDate: string) =>
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(isoDate));
+
+const weekRangeLabel = (startIso: string, endIso: string) => {
+  const formatter = new Intl.DateTimeFormat("es-ES", {
+    day: "numeric",
+    month: "short",
+  });
+
+  return `${formatter.format(new Date(startIso))} - ${formatter.format(new Date(endIso))}`;
+};
 
 const notify = (title: string, body: string) => {
   if (typeof window === "undefined") return;
@@ -157,6 +168,7 @@ export function MealPlannerApp() {
   const [shoppingChecked, setShoppingChecked] = useState<Record<string, boolean>>({});
   const [customShoppingItems, setCustomShoppingItems] = useState<CustomShoppingItem[]>([]);
   const [customItemInput, setCustomItemInput] = useState("");
+  const [selectedWeekId, setSelectedWeekId] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -178,10 +190,19 @@ export function MealPlannerApp() {
     };
   }, [month]);
 
-  const shopping = useMemo(() => buildShoppingList(plan), [plan]);
+  const weeks = useMemo(() => getPlanWeeks(plan), [plan]);
+  const selectedWeek = useMemo<PlanWeek | undefined>(
+    () => weeks.find((week) => week.id === selectedWeekId) ?? weeks[0],
+    [selectedWeekId, weeks]
+  );
+  const selectedWeekIndex = selectedWeek ? weeks.findIndex((week) => week.id === selectedWeek.id) : -1;
+  const shopping = useMemo(
+    () => buildShoppingList(plan, selectedWeek?.days ?? []),
+    [plan, selectedWeek]
+  );
   const reminders = useMemo(() => getReminders(plan), [plan]);
-  const shoppingStorageKey = `shopping-checks-${month}`;
-  const customStorageKey = `shopping-custom-${month}`;
+  const shoppingStorageKey = selectedWeek ? `shopping-checks-${selectedWeek.id}` : `shopping-checks-${month}`;
+  const customStorageKey = selectedWeek ? `shopping-custom-${selectedWeek.id}` : `shopping-custom-${month}`;
 
   const daily = useMemo(() => getDailyFocus(plan, new Date()), [plan]);
   const todayReminders = useMemo(() => {
@@ -195,6 +216,22 @@ export function MealPlannerApp() {
       );
     });
   }, [reminders]);
+
+  useEffect(() => {
+    if (weeks.length === 0) {
+      setSelectedWeekId("");
+      return;
+    }
+
+    const hasSelectedWeek = weeks.some((week) => week.id === selectedWeekId);
+    if (hasSelectedWeek) {
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const currentWeek = weeks.find((week) => week.startDate <= today && week.endDate >= today) ?? weeks[0];
+    setSelectedWeekId(currentWeek.id);
+  }, [selectedWeekId, weeks]);
 
   useEffect(() => {
     try {
@@ -427,7 +464,7 @@ export function MealPlannerApp() {
             >
               <span
                 className={`absolute left-1 top-1 h-5 w-[52px] rounded-full bg-white shadow transition-transform duration-200 ${
-                  viewMode === "mensual" ? "translate-x-[44px]" : "translate-x-0"
+                  viewMode === "mensual" ? "translate-x-[56px]" : "translate-x-0"
                 }`}
               />
               <span className="relative z-10 w-1/2 text-center text-[11px] font-semibold">Día</span>
@@ -510,10 +547,45 @@ export function MealPlannerApp() {
       {currentPage === "compra" ? (
         <section className="mt-2 space-y-3 pb-8">
           <div className="rounded-xl border border-black/10 bg-neutral-50 p-3">
-            <h2 className="text-base font-bold">Compra mensual</h2>
+            <h2 className="text-base font-bold">Compra semanal</h2>
             <p className="text-sm font-semibold capitalize">{monthTitle(month)}</p>
+            {selectedWeek ? (
+              <p className="text-sm text-black/70">
+                Semana {selectedWeekIndex + 1} · {weekRangeLabel(selectedWeek.startDate, selectedWeek.endDate)}
+              </p>
+            ) : null}
             <p className="text-xs text-black/60">Total estimado: {shopping.totalEstimatedEur.toFixed(2)} €</p>
           </div>
+
+          {weeks.length > 0 ? (
+            <div className="flex items-center gap-2 rounded-xl border border-black/10 bg-white p-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const previousWeek = weeks[selectedWeekIndex - 1];
+                  if (previousWeek) setSelectedWeekId(previousWeek.id);
+                }}
+                disabled={selectedWeekIndex <= 0}
+                className="rounded-lg border border-black/15 px-3 py-2 text-sm disabled:opacity-40"
+              >
+                Anterior
+              </button>
+              <div className="flex-1 text-center text-sm font-medium">
+                {selectedWeek ? weekRangeLabel(selectedWeek.startDate, selectedWeek.endDate) : "Sin semana"}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextWeek = weeks[selectedWeekIndex + 1];
+                  if (nextWeek) setSelectedWeekId(nextWeek.id);
+                }}
+                disabled={selectedWeekIndex === -1 || selectedWeekIndex >= weeks.length - 1}
+                className="rounded-lg border border-black/15 px-3 py-2 text-sm disabled:opacity-40"
+              >
+                Siguiente
+              </button>
+            </div>
+          ) : null}
 
           <div className="rounded-xl border border-black/10 p-3">
             <p className="text-sm font-semibold">Añadir producto manual</p>
@@ -528,6 +600,7 @@ export function MealPlannerApp() {
                 +
               </button>
             </div>
+            <p className="mt-2 text-xs text-black/55">Los checks y añadidos se guardan por semana.</p>
           </div>
 
           <div className="space-y-2">
@@ -655,7 +728,7 @@ export function MealPlannerApp() {
                 }}
                 className="w-full rounded-xl border border-black/10 px-3 py-3 text-left text-sm font-semibold"
               >
-                Compra mensual
+                Compra semanal
               </button>
               <button
                 type="button"
