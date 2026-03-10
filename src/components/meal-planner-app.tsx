@@ -9,8 +9,12 @@ import {
   getPlanWeeks,
   getRecipePortionCalories,
   getReminders,
+  mealExecutionKey,
   scaleIngredientAmountForHousehold,
   type DayPlan,
+  type DailyFocusResult,
+  type MealExecutionState,
+  type PantryItem,
   type MealType,
   type MonthlyPlan,
   type PlanWeek,
@@ -24,6 +28,9 @@ interface CustomShoppingItem {
   label: string;
   checked: boolean;
 }
+
+type WeeklyShoppingChecks = Record<string, Record<string, boolean>>;
+type WeeklyCustomShoppingItems = Record<string, CustomShoppingItem[]>;
 
 interface AiResponse {
   message: string;
@@ -57,6 +64,31 @@ const weekRangeLabel = (startIso: string, endIso: string) => {
   });
 
   return `${formatter.format(new Date(startIso))} - ${formatter.format(new Date(endIso))}`;
+};
+
+const getShoppingChecksStorageKey = (weekId: string) => `shopping-checks-${weekId}`;
+const getCustomShoppingStorageKey = (weekId: string) => `shopping-custom-${weekId}`;
+const shoppingItemKey = (name: string, unit: PantryItem["unit"]) => `${name}-${unit}`;
+const pantryMapKey = (name: string, unit: PantryItem["unit"]) => `${name}__${unit}`;
+const mealExecutionStorageKey = (month: string) => `meal-execution-${month}`;
+
+const roundAmount = (value: number) => Math.round(value * 100) / 100;
+
+const clonePantryMap = (source: Map<string, PantryItem>) =>
+  new Map(
+    [...source.entries()].map(([key, item]) => [key, { ...item }])
+  );
+
+const addPantryAmount = (pantry: Map<string, PantryItem>, item: PantryItem) => {
+  const key = pantryMapKey(item.name, item.unit);
+  const current = pantry.get(key);
+
+  if (!current) {
+    pantry.set(key, { ...item, amount: roundAmount(item.amount) });
+    return;
+  }
+
+  current.amount = roundAmount(current.amount + item.amount);
 };
 
 const notify = (title: string, body: string) => {
@@ -165,8 +197,9 @@ export function MealPlannerApp() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiOutput, setAiOutput] = useState("");
   const [loadingAI, setLoadingAI] = useState(false);
-  const [shoppingChecked, setShoppingChecked] = useState<Record<string, boolean>>({});
-  const [customShoppingItems, setCustomShoppingItems] = useState<CustomShoppingItem[]>([]);
+  const [mealExecution, setMealExecution] = useState<Record<string, MealExecutionState>>({});
+  const [shoppingCheckedByWeek, setShoppingCheckedByWeek] = useState<WeeklyShoppingChecks>({});
+  const [customShoppingItemsByWeek, setCustomShoppingItemsByWeek] = useState<WeeklyCustomShoppingItems>({});
   const [customItemInput, setCustomItemInput] = useState("");
   const [selectedWeekId, setSelectedWeekId] = useState("");
 
@@ -196,15 +229,55 @@ export function MealPlannerApp() {
     [selectedWeekId, weeks]
   );
   const selectedWeekIndex = selectedWeek ? weeks.findIndex((week) => week.id === selectedWeek.id) : -1;
-  const shopping = useMemo(
-    () => buildShoppingList(plan, selectedWeek?.days ?? []),
-    [plan, selectedWeek]
-  );
   const reminders = useMemo(() => getReminders(plan), [plan]);
-  const shoppingStorageKey = selectedWeek ? `shopping-checks-${selectedWeek.id}` : `shopping-checks-${month}`;
-  const customStorageKey = selectedWeek ? `shopping-custom-${selectedWeek.id}` : `shopping-custom-${month}`;
+  const shoppingSimulation = useMemo(() => {
+    let pantryCarry = new Map<string, PantryItem>();
+    const byWeek: Record<string, { shopping: ReturnType<typeof buildShoppingList> }> = {};
 
-  const daily = useMemo(() => getDailyFocus(plan, new Date()), [plan]);
+    for (const week of weeks) {
+      const baseShopping = buildShoppingList(plan, week.days, [...pantryCarry.values()]);
+      const weekChecks = shoppingCheckedByWeek[week.id] ?? {};
+      const pantryWithPurchases = clonePantryMap(pantryCarry);
+
+      for (const item of baseShopping.items) {
+        if (!weekChecks[shoppingItemKey(item.name, item.requiredUnit)] || item.finalAmountPurchased <= 0) {
+          continue;
+        }
+
+        addPantryAmount(pantryWithPurchases, {
+          name: item.name,
+          unit: item.packageUnit,
+          amount: item.finalAmountPurchased,
+        });
+      }
+
+      const effectiveShopping = buildShoppingList(plan, week.days, [...pantryWithPurchases.values()]);
+
+      for (const item of effectiveShopping.items) {
+        const pantryItem = pantryWithPurchases.get(pantryMapKey(item.name, item.requiredUnit));
+        if (!pantryItem) {
+          continue;
+        }
+
+        pantryItem.amount = roundAmount(Math.max(0, pantryItem.amount - item.requiredAmount));
+        if (pantryItem.amount <= 0) {
+          pantryWithPurchases.delete(pantryMapKey(item.name, item.requiredUnit));
+        }
+      }
+
+      byWeek[week.id] = { shopping: effectiveShopping };
+      pantryCarry = pantryWithPurchases;
+    }
+
+    return byWeek;
+  }, [plan, shoppingCheckedByWeek, weeks]);
+  const shopping = selectedWeek ? shoppingSimulation[selectedWeek.id]?.shopping ?? buildShoppingList(plan, selectedWeek.days) : buildShoppingList(plan, []);
+  const shoppingChecked = selectedWeek ? shoppingCheckedByWeek[selectedWeek.id] ?? {} : {};
+  const customShoppingItems = selectedWeek ? customShoppingItemsByWeek[selectedWeek.id] ?? [] : [];
+  const shoppingItemsToBuy = shopping.items.filter((item) => item.packagesToBuy > 0);
+  const shoppingItemsCovered = shopping.items.filter((item) => item.packagesToBuy === 0);
+
+  const daily = useMemo<DailyFocusResult>(() => getDailyFocus(plan, new Date(), mealExecution), [plan, mealExecution]);
   const todayReminders = useMemo(() => {
     const now = new Date();
     return reminders.filter((item) => {
@@ -235,24 +308,54 @@ export function MealPlannerApp() {
 
   useEffect(() => {
     try {
-      const checksRaw = localStorage.getItem(shoppingStorageKey);
-      const customRaw = localStorage.getItem(customStorageKey);
-
-      setShoppingChecked(checksRaw ? (JSON.parse(checksRaw) as Record<string, boolean>) : {});
-      setCustomShoppingItems(customRaw ? (JSON.parse(customRaw) as CustomShoppingItem[]) : []);
+      const raw = localStorage.getItem(mealExecutionStorageKey(month));
+      setMealExecution(raw ? (JSON.parse(raw) as Record<string, MealExecutionState>) : {});
     } catch {
-      setShoppingChecked({});
-      setCustomShoppingItems([]);
+      setMealExecution({});
     }
-  }, [shoppingStorageKey, customStorageKey]);
+  }, [month]);
 
   useEffect(() => {
-    localStorage.setItem(shoppingStorageKey, JSON.stringify(shoppingChecked));
-  }, [shoppingChecked, shoppingStorageKey]);
+    localStorage.setItem(mealExecutionStorageKey(month), JSON.stringify(mealExecution));
+  }, [mealExecution, month]);
 
   useEffect(() => {
-    localStorage.setItem(customStorageKey, JSON.stringify(customShoppingItems));
-  }, [customShoppingItems, customStorageKey]);
+    if (weeks.length === 0) {
+      setShoppingCheckedByWeek({});
+      setCustomShoppingItemsByWeek({});
+      return;
+    }
+
+    try {
+      const nextChecks: WeeklyShoppingChecks = {};
+      const nextCustom: WeeklyCustomShoppingItems = {};
+
+      for (const week of weeks) {
+        const checksRaw = localStorage.getItem(getShoppingChecksStorageKey(week.id));
+        const customRaw = localStorage.getItem(getCustomShoppingStorageKey(week.id));
+        nextChecks[week.id] = checksRaw ? (JSON.parse(checksRaw) as Record<string, boolean>) : {};
+        nextCustom[week.id] = customRaw ? (JSON.parse(customRaw) as CustomShoppingItem[]) : [];
+      }
+
+      setShoppingCheckedByWeek(nextChecks);
+      setCustomShoppingItemsByWeek(nextCustom);
+    } catch {
+      setShoppingCheckedByWeek({});
+      setCustomShoppingItemsByWeek({});
+    }
+  }, [weeks]);
+
+  useEffect(() => {
+    for (const [weekId, checks] of Object.entries(shoppingCheckedByWeek)) {
+      localStorage.setItem(getShoppingChecksStorageKey(weekId), JSON.stringify(checks));
+    }
+  }, [shoppingCheckedByWeek]);
+
+  useEffect(() => {
+    for (const [weekId, items] of Object.entries(customShoppingItemsByWeek)) {
+      localStorage.setItem(getCustomShoppingStorageKey(weekId), JSON.stringify(items));
+    }
+  }, [customShoppingItemsByWeek]);
 
   const requestNotifications = async () => {
     if (typeof window === "undefined") return;
@@ -317,17 +420,21 @@ export function MealPlannerApp() {
     return `${amount} ${unit}`;
   };
 
-  const renderMealCard = (title: string, body: string, accent = "") => (
+  const renderMealCard = (title: string, body: string, accent = "", controls?: React.ReactNode, note?: string) => (
     <article className={`rounded-2xl border border-black/10 bg-white p-4 shadow-sm ${accent}`}>
       <p className="text-xs font-semibold uppercase tracking-wide text-black/50">{title}</p>
       <p className="mt-2 text-sm font-medium text-black">{body}</p>
+      {note ? <p className="mt-2 text-xs text-black/55">{note}</p> : null}
+      {controls ? <div className="mt-3 flex flex-wrap gap-2">{controls}</div> : null}
     </article>
   );
 
   const renderRecipeCard = (
     title: string,
     recipe: DayPlan["comida"] | DayPlan["cena"],
-    accent = ""
+    accent = "",
+    controls?: React.ReactNode,
+    note?: string
   ) => {
     const calories = getRecipePortionCalories(recipe);
 
@@ -335,6 +442,7 @@ export function MealPlannerApp() {
       <article className={`rounded-2xl border border-black/10 bg-white p-4 shadow-sm ${accent}`}>
         <p className="text-xs font-semibold uppercase tracking-wide text-black/50">{title}</p>
         <h3 className="mt-2 text-base font-bold text-black">{recipe.title}</h3>
+        {note ? <p className="mt-1 text-xs text-black/55">{note}</p> : null}
         <p className="mt-1 text-xs text-black/60">Tiempo estimado: {recipe.minutes} min</p>
         <p className="mt-1 text-xs text-black/60">Porciones: {calories.servings} personas (Lorena + Gigi)</p>
         <p className="mt-1 text-xs text-black/60">
@@ -356,12 +464,15 @@ export function MealPlannerApp() {
             <li key={`${recipe.id}-step-${index}`}>{step}</li>
           ))}
         </ol>
+
+        {controls ? <div className="mt-4 flex flex-wrap gap-2">{controls}</div> : null}
       </article>
     );
   };
 
   const day = daily.day as DayPlan;
   const upcomingLabel = mealLabel[daily.focus];
+  const isCarryOverMeal = daily.sourceDate !== daily.scheduledDate;
 
   const capitalizeFirst = (text: string) => {
     if (!text) return text;
@@ -411,14 +522,67 @@ export function MealPlannerApp() {
     return `${product} - ${formatCompactAmount(finalAmountPurchased, unit)}`;
   };
 
-  const toggleShoppingCheck = (itemKey: string) => {
-    setShoppingChecked((previous) => ({
+  const currentMealKey = mealExecutionKey(daily.sourceDate, daily.focus);
+  const currentMealNote = isCarryOverMeal
+    ? `Pendiente desde ${dayLabel(daily.sourceDate)}. Si no lo haces hoy, se moverá a mañana.`
+    : `Planificado para ${dayLabel(daily.scheduledDate)}.`;
+
+  const markMealAsCooked = () => {
+    setMealExecution((previous) => ({
       ...previous,
-      [itemKey]: !previous[itemKey],
+      [currentMealKey]: {
+        ...previous[currentMealKey],
+        cooked: true,
+        lastDeferredOn: undefined,
+      },
+    }));
+  };
+
+  const deferMealToTomorrow = () => {
+    setMealExecution((previous) => ({
+      ...previous,
+      [currentMealKey]: {
+        ...previous[currentMealKey],
+        cooked: false,
+        lastDeferredOn: daily.scheduledDate,
+      },
+    }));
+  };
+
+  const mealControls = (
+    <>
+      <button
+        type="button"
+        onClick={markMealAsCooked}
+        className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
+      >
+        Cocinado
+      </button>
+      <button
+        type="button"
+        onClick={deferMealToTomorrow}
+        className="rounded-lg border border-black/15 bg-white px-3 py-2 text-xs font-semibold text-black"
+      >
+        No lo cocino hoy
+      </button>
+    </>
+  );
+
+  const toggleShoppingCheck = (itemKey: string) => {
+    if (!selectedWeek) return;
+
+    setShoppingCheckedByWeek((previous) => ({
+      ...previous,
+      [selectedWeek.id]: {
+        ...(previous[selectedWeek.id] ?? {}),
+        [itemKey]: !(previous[selectedWeek.id] ?? {})[itemKey],
+      },
     }));
   };
 
   const addCustomShoppingItem = () => {
+    if (!selectedWeek) return;
+
     const label = customItemInput.trim();
     if (!label) return;
     const newItem: CustomShoppingItem = {
@@ -426,18 +590,31 @@ export function MealPlannerApp() {
       label,
       checked: false,
     };
-    setCustomShoppingItems((previous) => [newItem, ...previous]);
+    setCustomShoppingItemsByWeek((previous) => ({
+      ...previous,
+      [selectedWeek.id]: [newItem, ...(previous[selectedWeek.id] ?? [])],
+    }));
     setCustomItemInput("");
   };
 
   const toggleCustomItem = (id: string) => {
-    setCustomShoppingItems((previous) =>
-      previous.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item))
-    );
+    if (!selectedWeek) return;
+
+    setCustomShoppingItemsByWeek((previous) => ({
+      ...previous,
+      [selectedWeek.id]: (previous[selectedWeek.id] ?? []).map((item) =>
+        item.id === id ? { ...item, checked: !item.checked } : item
+      ),
+    }));
   };
 
   const removeCustomItem = (id: string) => {
-    setCustomShoppingItems((previous) => previous.filter((item) => item.id !== id));
+    if (!selectedWeek) return;
+
+    setCustomShoppingItemsByWeek((previous) => ({
+      ...previous,
+      [selectedWeek.id]: (previous[selectedWeek.id] ?? []).filter((item) => item.id !== id),
+    }));
   };
 
   return (
@@ -482,10 +659,10 @@ export function MealPlannerApp() {
             <>
               <section className="space-y-3">
                 {daily.focus === "merienda"
-                  ? renderMealCard(upcomingLabel, day.merienda.title)
+                  ? renderMealCard(upcomingLabel, day.merienda.title, "", mealControls, currentMealNote)
                   : daily.focus === "comida"
-                    ? renderRecipeCard(upcomingLabel, day.comida, "border-l-4 border-l-emerald-500")
-                    : renderRecipeCard(upcomingLabel, day.cena, "border-l-4 border-l-blue-500")}
+                    ? renderRecipeCard(upcomingLabel, day.comida, "border-l-4 border-l-emerald-500", mealControls, currentMealNote)
+                    : renderRecipeCard(upcomingLabel, day.cena, "border-l-4 border-l-blue-500", mealControls, currentMealNote)}
               </section>
 
               <section className="mt-4 space-y-2">
@@ -555,6 +732,9 @@ export function MealPlannerApp() {
               </p>
             ) : null}
             <p className="text-xs text-black/60">Total estimado: {shopping.totalEstimatedEur.toFixed(2)} €</p>
+            <p className="mt-1 text-xs text-black/55">
+              Al marcar una compra, sus sobrantes se arrastran automáticamente a las semanas siguientes.
+            </p>
           </div>
 
           {weeks.length > 0 ? (
@@ -604,7 +784,7 @@ export function MealPlannerApp() {
           </div>
 
           <div className="space-y-2">
-            {shopping.items.map((item) => {
+            {shoppingItemsToBuy.map((item) => {
               const itemKey = `${item.name}-${item.requiredUnit}`;
               const checked = Boolean(shoppingChecked[itemKey]);
               return (
@@ -619,10 +799,56 @@ export function MealPlannerApp() {
                     <p className={`font-semibold ${checked ? "line-through text-black/50" : ""}`}>
                       {formatShoppingLine(item.name, item.finalAmountPurchased, item.packageUnit)}
                     </p>
+                    {item.pantryAmountUsed > 0 ? (
+                      <p className="mt-1 text-xs text-black/60">
+                        Ya tienes {formatCompactAmount(item.pantryAmountUsed, item.requiredUnit)} en casa.
+                      </p>
+                    ) : null}
                   </div>
                 </label>
               );
             })}
+
+            {shoppingItemsToBuy.length === 0 ? (
+              <article className="rounded-xl border border-black/10 bg-white p-3 text-sm text-black/60">
+                Esta semana no necesitas comprar nada más para las recetas planificadas.
+              </article>
+            ) : null}
+
+            {shoppingItemsCovered.length > 0 ? (
+              <div className="space-y-2 pt-2">
+                <p className="text-sm font-semibold">Ya lo tienes en casa</p>
+                {shoppingItemsCovered.map((item) => {
+                  const itemKey = `${item.name}-${item.requiredUnit}`;
+                  const checked = Boolean(shoppingChecked[itemKey]);
+
+                  return (
+                    <label key={`covered-${itemKey}`} className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleShoppingCheck(itemKey)}
+                        className="mt-1 h-4 w-4"
+                        disabled={!checked}
+                      />
+                      <div className="text-sm">
+                        <p className={`font-semibold ${checked ? "text-emerald-800" : "text-black/75"}`}>
+                          {capitalizeFirst(item.name)}
+                        </p>
+                        <p className="mt-1 text-xs text-black/60">
+                          Cubre {formatCompactAmount(item.requiredAmount, item.requiredUnit)} de esta semana.
+                        </p>
+                        {item.pantryRemainingAfterPlanning > 0 ? (
+                          <p className="text-xs text-black/60">
+                            Te quedarán {formatCompactAmount(item.pantryRemainingAfterPlanning, item.requiredUnit)} después de estas recetas.
+                          </p>
+                        ) : null}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
 
             {customShoppingItems.map((item) => (
               <div key={item.id} className="flex items-start gap-2 rounded-xl border border-black/10 bg-white p-2">

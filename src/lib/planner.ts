@@ -82,6 +82,18 @@ export interface ReminderItem {
   description: string;
 }
 
+export interface MealExecutionState {
+  cooked?: boolean;
+  lastDeferredOn?: string;
+}
+
+export interface DailyFocusResult {
+  day: DayPlan;
+  focus: MealType;
+  scheduledDate: string;
+  sourceDate: string;
+}
+
 interface PackageRule {
   unit: IngredientUnit;
   packageSize: number;
@@ -93,12 +105,21 @@ export interface ShoppingLine {
   name: string;
   requiredAmount: number;
   requiredUnit: IngredientUnit;
+  pantryAmountUsed: number;
+  netAmountNeeded: number;
   packageSize: number;
   packageUnit: IngredientUnit;
   packagesToBuy: number;
   finalAmountPurchased: number;
+  pantryRemainingAfterPlanning: number;
   estimatedTotalEur: number;
   mercadonaUrl?: string;
+}
+
+export interface PantryItem {
+  name: string;
+  unit: IngredientUnit;
+  amount: number;
 }
 
 export interface ShoppingList {
@@ -134,14 +155,29 @@ const MERCADONA_SEARCH = "https://tienda.mercadona.es/search-results?query=";
 
 const link = (name: string) => `${MERCADONA_SEARCH}${encodeURIComponent(name)}`;
 
-const WEEKLY_MAIN_SLOTS: Array<{ comida: string; cena: string }> = [
-  { comida: "pollo_arroz_ensalada", cena: "salmon_brocoli_airfryer" },
-  { comida: "ternera_patata_airfryer", cena: "crema_alcachofa_2_huevos" },
-  { comida: "merluza_lentejas_ensalada", cena: "pollo_couscous_berenjena" },
-  { comida: "caballa_garbanzos_ensalada", cena: "lomo_batata_coliflor" },
-  { comida: "pollo_habas_ensalada", cena: "crema_esparragos_2_huevos" },
-  { comida: "bacalao_ensalada_grande", cena: "sardinas_berenjena_brocoli" },
-  { comida: "tortilla_2_huevos_ensalada", cena: "verduras_airfryer_completa" },
+const WEEKLY_MAIN_SLOTS: Array<{ comida: string[]; cena: string[] }> = [
+  {
+    comida: ["pollo_arroz_ensalada", "pollo_arroz_calabacin_limon"],
+    cena: ["salmon_brocoli_airfryer", "salmon_calabacin_limon_sesamo"],
+  },
+  { comida: ["ternera_patata_airfryer"], cena: ["crema_alcachofa_2_huevos"] },
+  {
+    comida: ["merluza_lentejas_ensalada"],
+    cena: ["pollo_couscous_berenjena", "nuggets_pollo_coliflor_queso_couscous"],
+  },
+  {
+    comida: ["caballa_garbanzos_ensalada", "caballa_garbanzos_mozzarella_manzana"],
+    cena: ["lomo_batata_coliflor"],
+  },
+  { comida: ["pollo_habas_ensalada"], cena: ["crema_esparragos_2_huevos"] },
+  {
+    comida: ["bacalao_ensalada_grande", "bacalao_ensalada_yogur_limon"],
+    cena: ["sardinas_berenjena_brocoli"],
+  },
+  {
+    comida: ["tortilla_2_huevos_ensalada", "tortilla_espinacas_requeson"],
+    cena: ["verduras_airfryer_completa"],
+  },
 ];
 
 const MERIENDAS: Merienda[] = [
@@ -286,6 +322,29 @@ const RECIPES: Recipe[] = [
     ],
   },
   {
+    id: "salmon_calabacin_limon_sesamo",
+    title: "Salmón con calabacín, limón y sésamo",
+    mealType: "cena",
+    protein: "pescado_azul",
+    side: "ensalada_verduras",
+    minutes: 22,
+    freezerProtein: true,
+    ingredients: [
+      { name: "lomo de salmón", amount: 180, unit: "g", mercadonaUrl: link("salmon") },
+      { name: "calabacín", amount: 220, unit: "g", mercadonaUrl: link("calabacin") },
+      { name: "limón", amount: 60, unit: "g", mercadonaUrl: link("limon") },
+      { name: "semillas de sésamo", amount: 8, unit: "g", mercadonaUrl: link("sesamo") },
+      { name: "aceite de oliva virgen extra", amount: 8, unit: "ml", mercadonaUrl: link("aceite de oliva") },
+    ],
+    steps: [
+      "Cortar el calabacín en medias lunas finas y saltear 6-7 minutos con una pizca de sal.",
+      "Rallar un poco de limón y exprimir la mitad para preparar un aliño rápido.",
+      "Cocinar el salmón a la plancha 3-4 minutos por lado.",
+      "Añadir el limón y el sésamo al calabacín justo al final para que quede aromático.",
+      "Servir el salmón sobre el calabacín y terminar con unas gotas de AOVE.",
+    ],
+  },
+  {
     id: "ternera_patata_airfryer",
     title: "Ternera con patata en airfryer",
     mealType: "comida",
@@ -395,6 +454,30 @@ const RECIPES: Recipe[] = [
     ],
   },
   {
+    id: "caballa_garbanzos_mozzarella_manzana",
+    title: "Caballa con garbanzos salteados, mozzarella, pepino y manzana",
+    mealType: "comida",
+    protein: "pescado_azul",
+    side: "garbanzos",
+    minutes: 20,
+    freezerProtein: false,
+    ingredients: [
+      { name: "caballa en filetes", amount: 170, unit: "g", mercadonaUrl: link("caballa") },
+      { name: "garbanzos cocidos", amount: 180, unit: "g", mercadonaUrl: link("garbanzos cocidos") },
+      { name: "mozzarella fresca", amount: 80, unit: "g", mercadonaUrl: link("mozzarella") },
+      { name: "pepino", amount: 120, unit: "g", mercadonaUrl: link("pepino") },
+      { name: "manzana", amount: 80, unit: "g", mercadonaUrl: link("manzana") },
+      { name: "limón", amount: 40, unit: "g", mercadonaUrl: link("limon") },
+    ],
+    steps: [
+      "Escurrir los garbanzos y saltearlos 4 minutos hasta que queden dorados por fuera.",
+      "Rallar la manzana y mezclarla con pepino en cubos pequeños y zumo de limón.",
+      "Desmenuzar la mozzarella con las manos para que se reparta mejor en la ensalada.",
+      "Marcar la caballa 3 minutos por lado en plancha bien caliente.",
+      "Montar el plato con garbanzos calientes, la mezcla fresca por encima y la caballa al final.",
+    ],
+  },
+  {
     id: "lomo_batata_coliflor",
     title: "Cinta de lomo vuelta y vuelta con brócoli airfryer",
     mealType: "cena",
@@ -479,6 +562,30 @@ const RECIPES: Recipe[] = [
     ],
   },
   {
+    id: "bacalao_ensalada_yogur_limon",
+    title: "Bacalao con ensalada crujiente y yogur al limón",
+    mealType: "comida",
+    protein: "pescado_blanco",
+    side: "ensalada_verduras",
+    minutes: 20,
+    freezerProtein: true,
+    ingredients: [
+      { name: "lomos de bacalao", amount: 180, unit: "g", mercadonaUrl: link("bacalao") },
+      { name: "pepino", amount: 120, unit: "g", mercadonaUrl: link("pepino") },
+      { name: "zanahoria", amount: 90, unit: "g", mercadonaUrl: link("zanahoria") },
+      { name: "yogur natural", amount: 1, unit: "unidad", mercadonaUrl: link("yogur natural") },
+      { name: "limón", amount: 40, unit: "g", mercadonaUrl: link("limon") },
+      { name: "lechuga", amount: 100, unit: "g", mercadonaUrl: link("lechuga") },
+    ],
+    steps: [
+      "Rallar la zanahoria y cortar el pepino fino para una ensalada muy crujiente.",
+      "Mezclar el yogur con limón, sal y pimienta para una salsa ligera.",
+      "Hacer el bacalao a la plancha 3-4 minutos por lado con poco aceite.",
+      "Combinar lechuga, zanahoria y pepino, y aliñar con la salsa de yogur al limón.",
+      "Servir el bacalao recién hecho sobre la ensalada fría.",
+    ],
+  },
+  {
     id: "sardinas_berenjena_brocoli",
     title: "Sardinas con berenjena y brócoli airfryer",
     mealType: "cena",
@@ -541,6 +648,74 @@ const RECIPES: Recipe[] = [
       "Servir caliente como cena ligera o acompañamiento.",
     ],
   },
+  {
+    id: "tortilla_espinacas_requeson",
+    title: "Tortilla jugosa de espinacas y requesón con ensalada",
+    mealType: "comida",
+    protein: "huevos",
+    side: "ensalada_verduras",
+    minutes: 16,
+    freezerProtein: false,
+    ingredients: [
+      { name: "huevos", amount: 2, unit: "unidad", mercadonaUrl: link("huevos") },
+      { name: "espinacas frescas", amount: 80, unit: "g", mercadonaUrl: link("espinacas") },
+      { name: "requesón", amount: 70, unit: "g", mercadonaUrl: link("requeson") },
+      { name: "ensalada mezcla", amount: 100, unit: "g", mercadonaUrl: link("ensalada") },
+    ],
+    steps: [
+      "Saltear las espinacas 2-3 minutos hasta que bajen de volumen.",
+      "Batir los huevos y mezclar con el requesón para que la tortilla quede más cremosa.",
+      "Añadir las espinacas y cuajar la mezcla 2-3 minutos por cada lado.",
+      "Preparar una ensalada rápida para acompañar.",
+      "Servir la tortilla recién hecha con la ensalada al lado.",
+    ],
+  },
+  {
+    id: "pollo_arroz_calabacin_limon",
+    title: "Pollo al limón con arroz y calabacín",
+    mealType: "comida",
+    protein: "pollo",
+    side: "arroz",
+    minutes: 24,
+    freezerProtein: true,
+    ingredients: [
+      { name: "pechuga de pollo", amount: 180, unit: "g", mercadonaUrl: link("pechuga de pollo") },
+      { name: "arroz redondo", amount: 80, unit: "g", mercadonaUrl: link("arroz") },
+      { name: "calabacín", amount: 180, unit: "g", mercadonaUrl: link("calabacin") },
+      { name: "limón", amount: 50, unit: "g", mercadonaUrl: link("limon") },
+      { name: "aceite de oliva virgen extra", amount: 10, unit: "ml", mercadonaUrl: link("aceite de oliva") },
+    ],
+    steps: [
+      "Cocer el arroz en agua con sal durante 15 minutos y escurrir.",
+      "Cortar el calabacín en medias lunas y saltearlo 5-6 minutos.",
+      "Hacer la pechuga a la plancha 6 minutos por lado hasta que quede dorada.",
+      "Añadir zumo y ralladura de limón al pollo y al calabacín al final.",
+      "Servir el pollo con el arroz y el calabacín templado.",
+    ],
+  },
+  {
+    id: "nuggets_pollo_coliflor_queso_couscous",
+    title: "Nuggets de pollo, huevo, coliflor y queso con couscous",
+    mealType: "cena",
+    protein: "pollo",
+    side: "pasta_couscous",
+    minutes: 28,
+    freezerProtein: true,
+    ingredients: [
+      { name: "muslo de pollo deshuesado", amount: 180, unit: "g", mercadonaUrl: link("muslo de pollo") },
+      { name: "huevos", amount: 1, unit: "unidad", mercadonaUrl: link("huevos") },
+      { name: "coliflor", amount: 180, unit: "g", mercadonaUrl: link("coliflor") },
+      { name: "queso rallado", amount: 35, unit: "g", mercadonaUrl: link("queso rallado") },
+      { name: "couscous", amount: 70, unit: "g", mercadonaUrl: link("couscous") },
+    ],
+    steps: [
+      "Picar el pollo muy fino o triturarlo unos segundos para formar una masa rápida.",
+      "Rallar la coliflor y mezclarla con el pollo, el huevo y el queso rallado.",
+      "Formar nuggets con una cuchara y cocinarlos en airfryer 12-14 minutos a 190ºC, girando a mitad.",
+      "Hidratar el couscous con agua caliente 5 minutos y soltar con un tenedor.",
+      "Servir los nuggets con el couscous caliente y especias al gusto.",
+    ],
+  },
 ];
 
 const KCAL_PER_100_G_OR_ML: Record<string, number> = {
@@ -567,10 +742,15 @@ const KCAL_PER_100_G_OR_ML: Record<string, number> = {
   calabacín: 17,
   tomate: 18,
   "tomate cherry": 18,
+  limón: 29,
   lechuga: 15,
   "ensalada mezcla": 16,
   rúcula: 25,
   pepino: 15,
+  "mozzarella fresca": 250,
+  requesón: 160,
+  "queso rallado": 380,
+  "semillas de sésamo": 573,
   pimiento: 31,
   cebolla: 40,
   "compota de manzana": 85,
@@ -757,6 +937,8 @@ const getMeriendaById = (id: string) => {
   return merienda;
 };
 
+const getSlotRecipeId = (options: string[], weekIndex: number) => options[weekIndex % options.length];
+
 const formatMonth = (year: number, monthIndex0Based: number) => {
   const month = String(monthIndex0Based + 1).padStart(2, "0");
   return `${year}-${month}`;
@@ -775,13 +957,15 @@ export const generateMonthlyPlan = (month: string): MonthlyPlan => {
 
   const days: DayPlan[] = Array.from({ length: daysInMonth }).map((_, dayIndex) => {
     const date = new Date(year, monthIndex, dayIndex + 1);
-    const weekSlot = WEEKLY_MAIN_SLOTS[dayIndex % WEEKLY_MAIN_SLOTS.length];
+    const slotIndex = dayIndex % WEEKLY_MAIN_SLOTS.length;
+    const weekIndex = Math.floor(dayIndex / WEEKLY_MAIN_SLOTS.length);
+    const weekSlot = WEEKLY_MAIN_SLOTS[slotIndex];
 
     return {
       date: date.toISOString().slice(0, 10),
       merienda: getMeriendaByDayIndex(dayIndex),
-      comida: getRecipeById(weekSlot.comida),
-      cena: getRecipeById(weekSlot.cena),
+      comida: getRecipeById(getSlotRecipeId(weekSlot.comida, weekIndex)),
+      cena: getRecipeById(getSlotRecipeId(weekSlot.cena, weekIndex)),
     };
   });
 
@@ -798,6 +982,8 @@ const getWeekStartDate = (isoDate: string) => {
   date.setDate(date.getDate() + offset);
   return date.toISOString().slice(0, 10);
 };
+
+export const mealExecutionKey = (date: string, meal: MealType) => `${date}__${meal}`;
 
 const proteinReminderLabel = (recipe: Recipe) => {
   if (recipe.protein === "pollo") return "pollo";
@@ -927,8 +1113,13 @@ export const getPlanWeeks = (plan: MonthlyPlan): PlanWeek[] => {
   return [...weeks.values()].sort((a, b) => a.startDate.localeCompare(b.startDate));
 };
 
-export const buildShoppingList = (plan: MonthlyPlan, days = plan.days): ShoppingList => {
+export const buildShoppingList = (plan: MonthlyPlan, days = plan.days, pantry: PantryItem[] = []): ShoppingList => {
   const totals = new Map<string, { name: string; unit: IngredientUnit; amount: number; mercadonaUrl?: string }>();
+  const pantryMap = new Map<string, number>();
+
+  for (const item of pantry) {
+    pantryMap.set(ingredientKey(item.name, item.unit), item.amount);
+  }
 
   for (const day of days) {
     const grouped = [day.merienda.ingredients, day.comida.ingredients, day.cena.ingredients];
@@ -956,8 +1147,12 @@ export const buildShoppingList = (plan: MonthlyPlan, days = plan.days): Shopping
     const packageRule = PACKAGE_RULES[entry.name];
     const packageSize = packageRule?.packageSize ?? entry.amount;
     const packageUnit = packageRule?.unit ?? entry.unit;
+    const availableFromPantry = pantryMap.get(ingredientKey(entry.name, entry.unit)) ?? 0;
+    const pantryAmountUsed = Math.min(entry.amount, availableFromPantry);
+    const pantryRemainingAfterPlanning = Math.max(0, availableFromPantry - pantryAmountUsed);
+    const netAmountNeeded = Math.max(0, entry.amount - pantryAmountUsed);
 
-    const packagesToBuy = Math.ceil(entry.amount / packageSize);
+    const packagesToBuy = netAmountNeeded > 0 ? Math.ceil(netAmountNeeded / packageSize) : 0;
     const finalAmountPurchased = packagesToBuy * packageSize;
     const price = packageRule?.pricePerPackageEur ?? 0;
 
@@ -965,10 +1160,13 @@ export const buildShoppingList = (plan: MonthlyPlan, days = plan.days): Shopping
       name: entry.name,
       requiredAmount: round(entry.amount),
       requiredUnit: entry.unit,
+      pantryAmountUsed: round(pantryAmountUsed),
+      netAmountNeeded: round(netAmountNeeded),
       packageSize,
       packageUnit,
       packagesToBuy,
       finalAmountPurchased,
+      pantryRemainingAfterPlanning: round(pantryRemainingAfterPlanning),
       estimatedTotalEur: round(packagesToBuy * price),
       mercadonaUrl: packageRule?.mercadonaUrl ?? entry.mercadonaUrl,
     });
@@ -996,13 +1194,71 @@ const nextMealType = (now: Date): MealType => {
   return "comida";
 };
 
-export const getDailyFocus = (plan: MonthlyPlan, now = new Date()) => {
+const MEAL_ORDER: MealType[] = ["comida", "merienda", "cena"];
+
+const getPendingOccurrenceForDateAndMeal = (
+  plan: MonthlyPlan,
+  targetDate: string,
+  meal: MealType,
+  execution: Record<string, MealExecutionState>
+) => {
+  for (const day of plan.days) {
+    if (day.date > targetDate) {
+      break;
+    }
+
+    const state = execution[mealExecutionKey(day.date, meal)];
+    if (state?.cooked) {
+      continue;
+    }
+
+    if (state?.lastDeferredOn === targetDate) {
+      return null;
+    }
+
+    return {
+      day,
+      sourceDate: day.date,
+      scheduledDate: targetDate,
+      focus: meal,
+    } satisfies DailyFocusResult;
+  }
+
+  return null;
+};
+
+export const getDailyFocus = (
+  plan: MonthlyPlan,
+  now = new Date(),
+  execution: Record<string, MealExecutionState> = {}
+): DailyFocusResult => {
   const today = now.toISOString().slice(0, 10);
   const fallback = plan.days[0];
-  const day = plan.days.find((item) => item.date === today) ?? fallback;
+  const todayIndex = Math.max(
+    0,
+    plan.days.findIndex((item) => item.date === today)
+  );
+  const currentMeal = nextMealType(now);
+  const startMealIndex = MEAL_ORDER.indexOf(currentMeal);
+
+  for (let dayIndex = todayIndex; dayIndex < plan.days.length; dayIndex += 1) {
+    const scheduledDay = plan.days[dayIndex];
+    const mealStartIndex = dayIndex === todayIndex ? startMealIndex : 0;
+
+    for (let mealIndex = mealStartIndex; mealIndex < MEAL_ORDER.length; mealIndex += 1) {
+      const focus = MEAL_ORDER[mealIndex];
+      const occurrence = getPendingOccurrenceForDateAndMeal(plan, scheduledDay.date, focus, execution);
+      if (occurrence) {
+        return occurrence;
+      }
+    }
+  }
+
   return {
-    day,
-    focus: nextMealType(now),
+    day: fallback,
+    focus: currentMeal,
+    scheduledDate: fallback.date,
+    sourceDate: fallback.date,
   };
 };
 

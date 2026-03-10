@@ -63,8 +63,10 @@ npm run dev
 - Vista diaria enfocada automáticamente en la próxima comida.
 - Vista mensual completa con toggle diaria/mensual.
 - Lista de compra semanal con redondeo por paquete (ej. arroz por kilo).
+- Despensa implícita: al marcar una compra, los sobrantes se arrastran a semanas siguientes.
 - Recordatorios de descongelado, compra semanal y batch cooking.
 - Consulta a Gemini para aplicar ajustes reales sobre recetas y guardar automáticamente en Supabase.
+- Rotación ampliada de recetas saludables, rápidas y algo más originales dentro del patrón semanal.
 
 ## API endpoints
 
