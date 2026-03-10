@@ -32,6 +32,12 @@ interface CustomShoppingItem {
 type WeeklyShoppingChecks = Record<string, Record<string, boolean>>;
 type WeeklyCustomShoppingItems = Record<string, CustomShoppingItem[]>;
 
+interface PersistedMealState {
+  mealExecution: Record<string, MealExecutionState>;
+  shoppingCheckedByWeek: WeeklyShoppingChecks;
+  customShoppingItemsByWeek: WeeklyCustomShoppingItems;
+}
+
 interface AiResponse {
   message: string;
   updatedPlan?: MonthlyPlan;
@@ -71,6 +77,7 @@ const getCustomShoppingStorageKey = (weekId: string) => `shopping-custom-${weekI
 const shoppingItemKey = (name: string, unit: PantryItem["unit"]) => `${name}-${unit}`;
 const pantryMapKey = (name: string, unit: PantryItem["unit"]) => `${name}__${unit}`;
 const mealExecutionStorageKey = (month: string) => `meal-execution-${month}`;
+const persistedStateStorageKey = (month: string) => `meal-state-${month}`;
 
 const roundAmount = (value: number) => Math.round(value * 100) / 100;
 
@@ -89,6 +96,83 @@ const addPantryAmount = (pantry: Map<string, PantryItem>, item: PantryItem) => {
   }
 
   current.amount = roundAmount(current.amount + item.amount);
+};
+
+const emptyPersistedMealState = (): PersistedMealState => ({
+  mealExecution: {},
+  shoppingCheckedByWeek: {},
+  customShoppingItemsByWeek: {},
+});
+
+const getStoredState = async (month: string): Promise<PersistedMealState | null> => {
+  try {
+    const response = await fetch(`/api/state?month=${month}`);
+    if (!response.ok) return null;
+    return (await response.json()) as PersistedMealState;
+  } catch {
+    return null;
+  }
+};
+
+const saveState = async (month: string, payload: PersistedMealState) => {
+  try {
+    const response = await fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month, payload }),
+    });
+
+    if (!response.ok) {
+      throw new Error("State API no disponible");
+    }
+  } catch {
+    localStorage.setItem(persistedStateStorageKey(month), JSON.stringify(payload));
+  }
+};
+
+const getLocalState = (month: string, weeks: PlanWeek[]): PersistedMealState => {
+  if (typeof window === "undefined") {
+    return emptyPersistedMealState();
+  }
+
+  const combinedRaw = localStorage.getItem(persistedStateStorageKey(month));
+  if (combinedRaw) {
+    try {
+      return JSON.parse(combinedRaw) as PersistedMealState;
+    } catch {
+      localStorage.removeItem(persistedStateStorageKey(month));
+    }
+  }
+
+  const mealExecutionRaw = localStorage.getItem(mealExecutionStorageKey(month));
+  let mealExecution: Record<string, MealExecutionState> = {};
+
+  try {
+    mealExecution = mealExecutionRaw ? (JSON.parse(mealExecutionRaw) as Record<string, MealExecutionState>) : {};
+  } catch {
+    mealExecution = {};
+  }
+
+  const shoppingCheckedByWeek: WeeklyShoppingChecks = {};
+  const customShoppingItemsByWeek: WeeklyCustomShoppingItems = {};
+
+  for (const week of weeks) {
+    try {
+      const checksRaw = localStorage.getItem(getShoppingChecksStorageKey(week.id));
+      const customRaw = localStorage.getItem(getCustomShoppingStorageKey(week.id));
+      shoppingCheckedByWeek[week.id] = checksRaw ? (JSON.parse(checksRaw) as Record<string, boolean>) : {};
+      customShoppingItemsByWeek[week.id] = customRaw ? (JSON.parse(customRaw) as CustomShoppingItem[]) : [];
+    } catch {
+      shoppingCheckedByWeek[week.id] = {};
+      customShoppingItemsByWeek[week.id] = [];
+    }
+  }
+
+  return {
+    mealExecution,
+    shoppingCheckedByWeek,
+    customShoppingItemsByWeek,
+  };
 };
 
 const notify = (title: string, body: string) => {
@@ -202,6 +286,7 @@ export function MealPlannerApp() {
   const [customShoppingItemsByWeek, setCustomShoppingItemsByWeek] = useState<WeeklyCustomShoppingItems>({});
   const [customItemInput, setCustomItemInput] = useState("");
   const [selectedWeekId, setSelectedWeekId] = useState("");
+  const [stateHydrated, setStateHydrated] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,55 +392,50 @@ export function MealPlannerApp() {
   }, [selectedWeekId, weeks]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(mealExecutionStorageKey(month));
-      setMealExecution(raw ? (JSON.parse(raw) as Record<string, MealExecutionState>) : {});
-    } catch {
-      setMealExecution({});
-    }
-  }, [month]);
+    let cancelled = false;
 
-  useEffect(() => {
-    localStorage.setItem(mealExecutionStorageKey(month), JSON.stringify(mealExecution));
-  }, [mealExecution, month]);
-
-  useEffect(() => {
     if (weeks.length === 0) {
-      setShoppingCheckedByWeek({});
-      setCustomShoppingItemsByWeek({});
+      setStateHydrated(false);
       return;
     }
 
-    try {
-      const nextChecks: WeeklyShoppingChecks = {};
-      const nextCustom: WeeklyCustomShoppingItems = {};
+    const loadState = async () => {
+      const remoteState = await getStoredState(month);
+      const nextState = remoteState ?? getLocalState(month, weeks);
 
-      for (const week of weeks) {
-        const checksRaw = localStorage.getItem(getShoppingChecksStorageKey(week.id));
-        const customRaw = localStorage.getItem(getCustomShoppingStorageKey(week.id));
-        nextChecks[week.id] = checksRaw ? (JSON.parse(checksRaw) as Record<string, boolean>) : {};
-        nextCustom[week.id] = customRaw ? (JSON.parse(customRaw) as CustomShoppingItem[]) : [];
+      if (cancelled) {
+        return;
       }
 
-      setShoppingCheckedByWeek(nextChecks);
-      setCustomShoppingItemsByWeek(nextCustom);
-    } catch {
-      setShoppingCheckedByWeek({});
-      setCustomShoppingItemsByWeek({});
-    }
-  }, [weeks]);
+      setMealExecution(nextState.mealExecution ?? {});
+      setShoppingCheckedByWeek(nextState.shoppingCheckedByWeek ?? {});
+      setCustomShoppingItemsByWeek(nextState.customShoppingItemsByWeek ?? {});
+      setStateHydrated(true);
+
+      localStorage.setItem(persistedStateStorageKey(month), JSON.stringify(nextState));
+    };
+
+    loadState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [month, weeks]);
 
   useEffect(() => {
-    for (const [weekId, checks] of Object.entries(shoppingCheckedByWeek)) {
-      localStorage.setItem(getShoppingChecksStorageKey(weekId), JSON.stringify(checks));
+    if (!stateHydrated) {
+      return;
     }
-  }, [shoppingCheckedByWeek]);
 
-  useEffect(() => {
-    for (const [weekId, items] of Object.entries(customShoppingItemsByWeek)) {
-      localStorage.setItem(getCustomShoppingStorageKey(weekId), JSON.stringify(items));
-    }
-  }, [customShoppingItemsByWeek]);
+    const payload: PersistedMealState = {
+      mealExecution,
+      shoppingCheckedByWeek,
+      customShoppingItemsByWeek,
+    };
+
+    localStorage.setItem(persistedStateStorageKey(month), JSON.stringify(payload));
+    saveState(month, payload);
+  }, [customShoppingItemsByWeek, mealExecution, month, shoppingCheckedByWeek, stateHydrated]);
 
   const requestNotifications = async () => {
     if (typeof window === "undefined") return;
