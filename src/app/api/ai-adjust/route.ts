@@ -163,51 +163,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "Escribe una instrucción para ajustar recetas o compra." }, { status: 400 });
     }
 
-    if (!hasSupabaseServerConfig) {
-      return NextResponse.json(
-        { message: "Supabase no está configurado. Configura NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY." },
-        { status: 503 }
-      );
+    const supabase = hasSupabaseServerConfig ? getSupabaseServerClient() : null;
+
+    let basePlan: MonthlyPlan = generateMonthlyPlan(body.month);
+
+    if (supabase) {
+      const { data: dbPlan, error: readError } = await supabase
+        .from(TABLE)
+        .select("payload")
+        .eq("month", body.month)
+        .maybeSingle();
+
+      if (readError) {
+        return NextResponse.json({ message: `No se pudo leer el plan en Supabase: ${readError.message}` }, { status: 500 });
+      }
+
+      basePlan = (dbPlan?.payload as MonthlyPlan | null) ?? basePlan;
     }
-
-    const supabase = getSupabaseServerClient();
-
-    const { data: dbPlan, error: readError } = await supabase
-      .from(TABLE)
-      .select("payload")
-      .eq("month", body.month)
-      .maybeSingle();
-
-    if (readError) {
-      return NextResponse.json({ message: `No se pudo leer el plan en Supabase: ${readError.message}` }, { status: 500 });
-    }
-
-    const basePlan = (dbPlan?.payload as MonthlyPlan | null) ?? generateMonthlyPlan(body.month);
 
     const deterministicSwap = buildTomorrowSwapEdits(basePlan, body.prompt);
     if (deterministicSwap && deterministicSwap.edits.length > 0) {
       const updatedPlan = applyAIPlanEdits(basePlan, deterministicSwap.edits);
 
-      const { error: saveError } = await supabase.from(TABLE).upsert(
-        {
+      if (supabase) {
+        const { error: saveError } = await supabase.from(TABLE).upsert(
+          {
+            month: updatedPlan.month,
+            payload: updatedPlan,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "month" }
+        );
+
+        if (saveError) {
+          return NextResponse.json({ message: `No se pudo guardar el plan en Supabase: ${saveError.message}` }, { status: 500 });
+        }
+
+        await supabase.from(CHANGES_TABLE).insert({
           month: updatedPlan.month,
-          payload: updatedPlan,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "month" }
-      );
-
-      if (saveError) {
-        return NextResponse.json({ message: `No se pudo guardar el plan en Supabase: ${saveError.message}` }, { status: 500 });
+          prompt: body.prompt,
+          ai_message: deterministicSwap.message,
+          edits: deterministicSwap.edits,
+          created_at: new Date().toISOString(),
+        });
       }
-
-      await supabase.from(CHANGES_TABLE).insert({
-        month: updatedPlan.month,
-        prompt: body.prompt,
-        ai_message: deterministicSwap.message,
-        edits: deterministicSwap.edits,
-        created_at: new Date().toISOString(),
-      });
 
       return NextResponse.json({
         message: deterministicSwap.message,
@@ -326,26 +325,28 @@ Intenta preservar patrón semanal salvo que la instrucción lo rompa explícitam
 
     const updatedPlan = applyAIPlanEdits(basePlan, parsed.edits);
 
-    const { error: saveError } = await supabase.from(TABLE).upsert(
-      {
+    if (supabase) {
+      const { error: saveError } = await supabase.from(TABLE).upsert(
+        {
+          month: updatedPlan.month,
+          payload: updatedPlan,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "month" }
+      );
+
+      if (saveError) {
+        return NextResponse.json({ message: `No se pudo guardar el plan en Supabase: ${saveError.message}` }, { status: 500 });
+      }
+
+      await supabase.from(CHANGES_TABLE).insert({
         month: updatedPlan.month,
-        payload: updatedPlan,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "month" }
-    );
-
-    if (saveError) {
-      return NextResponse.json({ message: `No se pudo guardar el plan en Supabase: ${saveError.message}` }, { status: 500 });
+        prompt: body.prompt,
+        ai_message: parsed.message,
+        edits: parsed.edits,
+        created_at: new Date().toISOString(),
+      });
     }
-
-    await supabase.from(CHANGES_TABLE).insert({
-      month: updatedPlan.month,
-      prompt: body.prompt,
-      ai_message: parsed.message,
-      edits: parsed.edits,
-      created_at: new Date().toISOString(),
-    });
 
     return NextResponse.json({
       message: parsed.message,

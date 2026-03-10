@@ -475,6 +475,7 @@ export function MealPlannerApp() {
 
       if (data.updatedPlan) {
         setPlan(data.updatedPlan);
+        await savePlan(data.updatedPlan);
       }
 
       const suffix = typeof data.editsApplied === "number" ? `\nEdiciones aplicadas: ${data.editsApplied}` : "";
